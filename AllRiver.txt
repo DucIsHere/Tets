@@ -1,0 +1,1390 @@
+---GenWarp.java---
+package com.regenerationforrged.world.worldgen.cell.rivermap.gen;
+
+import com.regenerationforrged.world.worldgen.noise.domain.Domain;
+import com.regenerationforrged.world.worldgen.noise.domain.Domains;
+
+public record GenWarp(Domain lake, Domain river) {
+    public static final GenWarp EMPTY = new GenWarp(Domains.direct(), Domains.direct());
+    
+    public static GenWarp make(int seed, int continentScale) {
+        Domain lake = Domains.domainPerlin(++seed, 200, 1, 300.0F);
+        lake = Domains.add(lake, Domains.domainPerlin(++seed, 50, 2, 50.0F));
+
+        Domain river = Domains.domainPerlin(++seed, 180, 3, 80.0F);
+        river = Domains.add(river, Domains.domainPerlin(++seed, 32, 2, 25.0F));
+        river = Domains.add(river, Domains.domainPerlin(++seed, 8, 1, 6.0F));
+
+        return new GenWarp(lake, river);
+    }
+}
+
+---Lake.java---
+
+package com.regenerationforrged.world.worldgen.cell.rivermap.lake;
+
+import com.regenerationforrged.world.worldgen.cell.Cell;
+import com.regenerationforrged.world.worldgen.cell.terrain.TerrainType;
+import com.regenerationforrged.world.worldgen.noise.NoiseUtil;
+import com.regenerationforrged.world.worldgen.noise.NoiseUtil.Vec2f;
+import com.regenerationforrgedd.world.worldgen.util.Boundsf;
+
+public class Lake {
+    protected float valley;
+    protected float valley2;
+    protected float lakeDistance2;
+    protected float valleyDistance2;
+    protected float bankAlphaMin;
+    protected float bankAlphaMax;
+    protected float bankAlphaRange;
+    private float depth;
+    private float bankMin;
+    private float bankMax;
+    protected Vec2f center;
+    
+    public Lake(Vec2f center, float radius, float multiplier, LakeConfig config) {
+        float lake = radius * multiplier;
+        float valley = 275.0F * multiplier;
+        this.valley = valley;
+        this.valley2 = valley * valley;
+        this.center = center;
+        this.depth = config.depth;
+        this.bankMin = config.bankMin;
+        this.bankMax = config.bankMax;
+        this.bankAlphaMin = config.bankMin;
+        this.bankAlphaMax = Math.min(1.0F, this.bankAlphaMin + 0.275F);
+        this.bankAlphaRange = this.bankAlphaMax - this.bankAlphaMin;
+        this.lakeDistance2 = lake * lake;
+        this.valleyDistance2 = this.valley2 - this.lakeDistance2;
+    }
+    
+    public void apply(Cell cell, float x, float z) {
+        float distance2 = this.getDistance2(x, z);
+        if (distance2 > this.valley2) {
+            return;
+        }
+        float bankHeight = this.getBankHeight(cell);
+        if (distance2 <= this.lakeDistance2) {
+            cell.height = Math.min(bankHeight, cell.height);
+            if (distance2 < this.lakeDistance2) {
+                float depthAlpha = 1.0F - distance2 / this.lakeDistance2;
+                if (depthAlpha < 0.0F) {
+                    depthAlpha = 0.0F;
+                } else if (depthAlpha > 1.0F) {
+                    depthAlpha = 1.0F;
+                }
+                float lakeDepth = Math.min(cell.height, this.depth);
+                cell.height = NoiseUtil.lerp(cell.height, lakeDepth, depthAlpha);
+                cell.terrain = TerrainType.LAKE;
+                cell.riverMask = Math.min(cell.riverMask, 1.0F - depthAlpha);
+            }
+            return;
+        }
+        if (cell.height < bankHeight) {
+            return;
+        }
+        float valleyAlpha = 1.0F - (distance2 - this.lakeDistance2) / this.valleyDistance2;
+        if (valleyAlpha < 0.0F) {
+            valleyAlpha = 0.0F;
+        } else if (valleyAlpha > 1.0F) {
+            valleyAlpha = 1.0F;
+        }
+        cell.height = NoiseUtil.lerp(cell.height, bankHeight, valleyAlpha);
+        cell.riverMask *= 1.0F - valleyAlpha;
+        cell.riverMask = Math.min(cell.riverMask, 1.0F - valleyAlpha);
+    }
+    
+    public void recordBounds(Boundsf.Builder builder) {
+        builder.record(this.center.x() - this.valley * 1.2F, this.center.y() - this.valley * 1.2F);
+        builder.record(this.center.x() + this.valley * 1.2F, this.center.y() + this.valley * 1.2F);
+    }
+    
+    public boolean overlaps(float x, float z, float radius2) {
+        float dist2 = this.getDistance2(x, z);
+        return dist2 < this.lakeDistance2 + radius2;
+    }
+    
+    protected float getDistance2(float x, float z) {
+        float dx = this.center.x() - x;
+        float dz = this.center.y() - z;
+        return dx * dx + dz * dz;
+    }
+    
+    protected float getBankHeight(Cell cell) {
+        float bankHeightAlpha = NoiseUtil.map(cell.height, this.bankAlphaMin, this.bankAlphaMax, this.bankAlphaRange);
+        return NoiseUtil.lerp(this.bankMin, this.bankMax, bankHeightAlpha);
+    }
+}
+
+--- LakeConfig.java ---
+
+package com.regenerationforrged.world.worldgen.cell.rivermap.lake;
+
+import com.regenerationforrged.data.worldgen.preset.settings.RiverSettings;
+import com.regenerationforrged.world.worldgen.cell.heightmap.Levels;
+
+public class LakeConfig {
+    public float depth;
+    public float chance;
+    public float sizeMin;
+    public float sizeMax;
+    public float sizeRange;
+    public float bankMin;
+    public float bankMax;
+    public float distanceMin;
+    public float distanceMax;
+    
+    private LakeConfig(Builder builder) {
+        this.depth = builder.depth;
+        this.chance = builder.chance;
+        this.sizeMin = builder.sizeMin;
+        this.sizeMax = builder.sizeMax;
+        this.sizeRange = this.sizeMax - this.sizeMin;
+        this.bankMin = builder.bankMin;
+        this.bankMax = builder.bankMax;
+        this.distanceMin = builder.distanceMin;
+        this.distanceMax = builder.distanceMax;
+    }
+    
+    public static LakeConfig of(RiverSettings.Lake settings, Levels levels) {
+        Builder builder = new Builder();
+        builder.chance = settings.chance;
+        builder.sizeMin = settings.sizeMin;
+        builder.sizeMax = settings.sizeMax;
+        builder.depth = levels.water(-settings.depth);
+        builder.distanceMin = settings.minStartDistance;
+        builder.distanceMax = settings.maxStartDistance;
+        builder.bankMin = levels.water(settings.minBankHeight);
+        builder.bankMax = levels.water(settings.maxBankHeight);
+        return new LakeConfig(builder);
+    }
+    
+    public static class Builder {
+        public float chance;
+        public float depth;
+        public float sizeMin;
+        public float sizeMax;
+        public float bankMin;
+        public float bankMax;
+        public float distanceMin;
+        public float distanceMax;
+        
+        public Builder() {
+            this.depth = 10.0F;
+            this.sizeMin = 30.0F;
+            this.sizeMax = 100.0F;
+            this.bankMin = 1.0F;
+            this.bankMax = 8.0F;
+            this.distanceMin = 0.025F;
+            this.distanceMax = 0.05F;
+        }
+    }
+}
+
+---
+
+package com.regenerationforrged.world.worldgen.cell.rivermap.wetland;
+
+import com.regenerationforrged.world.worldgen.cell.Cell;
+import com.regenerationforrged.world.worldgen.cell.heightmap.Levels;
+import com.regenerationforrged.world.worldgen.cell.terrain.TerrainType;
+import com.regenerationforrged.world.worldgen.noise.NoiseUtil;
+import com.regenerationforrged.world.worldgen.noise.NoiseUtil.Vec2f;
+import com.regenerationforrged.world.worldgen.noise.module.Line;
+import com.regenerationforrged.world.worldgen.noise.module.Noise;
+import com.regenerationforrged.world.worldgen.noise.module.Noises;
+import com.regenerationforrged.world.worldgen.util.Boundsf;
+
+public class Wetland {
+    private Vec2f a;
+    private Vec2f b;
+    private float radius;
+    private float radius2;
+    private float bed;
+    private float banks;
+    private float moundMin;
+    private float moundMax;
+    private float moundVariance;
+    private Noise moundShape;
+    private Noise moundHeight;
+    private Noise terrainEdge;
+    
+    public Wetland(int seed, Vec2f a, Vec2f b, float radius, Levels levels) {
+        this.a = a;
+        this.b = b;
+        this.radius = radius;
+        this.radius2 = radius * radius;
+        this.bed = levels.water(-1) - 0.5F / levels.worldHeight;
+        this.banks = levels.ground(3);
+        this.moundMin = levels.water(1);
+        this.moundMax = levels.water(2);
+        this.moundVariance = this.moundMax - this.moundMin;
+        
+        Noise moundShape = Noises.perlin(++seed, 10, 1);
+        moundShape = Noises.clamp(moundShape, 0.3F, 0.6F);
+        moundShape = Noises.map(moundShape, 0.0F, 1.0F);
+        this.moundShape = moundShape;
+        
+        Noise moundHeight = Noises.simplex(++seed, 20, 1);
+        moundHeight = Noises.clamp(moundHeight, 0.0F, 0.3F);
+        moundHeight = Noises.map(moundHeight, 0.0F, 1.0F);
+        this.moundHeight = moundHeight;
+        
+        Noise terrainEdge = Noises.perlin(++seed, 8, 1);
+        terrainEdge = Noises.clamp(terrainEdge, 0.2F, 0.8F);
+        terrainEdge = Noises.map(terrainEdge, 0.0F, 0.9F);
+        this.terrainEdge = terrainEdge;
+    }
+    
+    public void apply(Cell cell, float rx, float rz, float x, float z) {
+        if (cell.height < this.bed) {
+            return;
+        }
+        float t = Line.distanceOnLine(rx, rz, this.a.x(), this.a.y(), this.b.x(), this.b.y());
+        float d2 = getDistance2(rx, rz, this.a.x(), this.a.y(), this.b.x(), this.b.y(), t);
+        if (d2 > this.radius2) {
+            return;
+        }
+        float dist = 1.0F - d2 / this.radius2;
+        if (dist <= 0.0F) {
+            return;
+        }
+        float valleyAlpha = NoiseUtil.map(dist, 0.0F, 0.65F, 0.65F);
+        if (cell.height > this.banks) {
+            cell.height = NoiseUtil.lerp(cell.height, this.banks, valleyAlpha);
+        }
+        float poolsAlpha = NoiseUtil.map(dist, 0.65F, 0.7F, 0.050000012F);
+        if (cell.height > this.bed && cell.height <= this.banks) {
+            cell.height = NoiseUtil.lerp(cell.height, this.bed, poolsAlpha);
+        }
+        if (poolsAlpha >= 1.0F) {
+            cell.erosionMask = true;
+        }
+        if (dist > 0.65F && poolsAlpha > this.terrainEdge.compute(x, z, 0)) {
+            cell.terrain = TerrainType.WETLAND;
+        }
+        if (cell.height >= this.bed && cell.height < this.moundMax) {
+            float shapeAlpha = this.moundShape.compute(x, z, 0) * poolsAlpha;
+            float mounds = this.moundMin + this.moundHeight.compute(x, z, 0) * this.moundVariance;
+            cell.height = NoiseUtil.lerp(cell.height, mounds, shapeAlpha);
+        }
+        cell.riverMask = Math.min(cell.riverMask, 1.0F - valleyAlpha);
+    }
+    
+    public void recordBounds(Boundsf.Builder builder) {
+        builder.record(Math.min(this.a.x(), this.b.x()) - this.radius, Math.min(this.a.y(), this.b.y()) - this.radius);
+        builder.record(Math.max(this.a.x(), this.b.x()) + this.radius, Math.max(this.a.y(), this.b.y()) + this.radius);
+    }
+    
+    private static float getDistance2(float x, float y, float ax, float ay, float bx, float by, float t) {
+        if (t <= 0.0f) {
+            return Line.distSq(x, y, ax, ay);
+        }
+        if (t >= 1.0f) {
+            return Line.distSq(x, y, bx, by);
+        }
+        float px = ax + t * (bx - ax);
+        float py = ay + t * (by - ay);
+        return Line.distSq(x, y, px, py);
+    }
+}
+
+---
+
+package com.regenerationforrged.world.worldgen.cell.rivermap.wetland;
+
+import com.regenerationforrged.data.worldgen.preset.settings.RiverSettings;
+import com.regenerationforrged.world.worldgen.noise.NoiseUtil;
+import com.regenerationforrged.world.worldgen.util.Variance;
+
+public class WetlandConfig {
+    public int skipSize;
+    public Variance length;
+    public Variance width;
+    
+    public WetlandConfig(RiverSettings.Wetland settings) {
+        this.skipSize = Math.max(1, NoiseUtil.round((1.0F - settings.chance) * 10.0F));
+        this.length = Variance.of(settings.sizeMin, settings.sizeMax);
+        this.width = Variance.of(50.0F, 150.0F);
+    }
+}
+
+---
+
+package com.regenerationforrged.world.worldgen.cell.rivermap;
+
+import java.util.concurrent.TimeUnit;
+
+import com.regenerationforrged.concurrent.cache.Cache;
+import com.regenerationforrged.concurrent.cache.map.StampedLongMap;
+import com.regenerationforrged.world.worldgen.util.PosUtil;
+
+public class RiverCache {
+    protected RiverGenerator generator;
+    protected Cache<Rivermap> cache;
+    
+    public RiverCache(RiverGenerator generator) {
+        this.cache = new Cache<>(32, 5L, 1L, TimeUnit.MINUTES, StampedLongMap::new);
+        this.generator = generator;
+    }
+    
+    public Rivermap getRivers(int x, int z) {
+        return this.cache.computeIfAbsent(PosUtil.pack(x, z), id -> {
+        	return this.generator.generateRivers(PosUtil.unpackLeft(id), PosUtil.unpackRight(id), id);
+        });
+    }
+}
+
+---
+
+package com.regenerationforrged.world.worldgen.cell.rivermap;
+
+public interface RiverGenerator {
+	Rivermap generateRivers(int x, int z, long id);
+}
+
+---
+
+package com.regenerationforrged.world.worldgen.cell.rivermap;
+
+import com.regenerationforrged.concurrent.cache.ExpiringEntry;
+import com.regenerationforrged.world.worldgen.cell.Cell;
+import com.regenerationforrged.world.worldgen.cell.heightmap.Heightmap;
+import com.regenerationforrged.world.worldgen.cell.rivermap.gen.GenWarp;
+import com.regenerationforrged.world.worldgen.cell.rivermap.river.Network;
+import com.regenerationforrged.world.worldgen.noise.domain.Domain;
+
+public class Rivermap implements ExpiringEntry {
+    private int x;
+    private int z;
+    private Domain lakeWarp;
+    private Domain riverWarp;
+    private Network[] networks;
+    private long timestamp;
+    
+    public Rivermap(int x, int z, Network[] networks, GenWarp warp) {
+        this.timestamp = System.currentTimeMillis();
+        this.x = x;
+        this.z = z;
+        this.networks = networks;
+        this.lakeWarp = warp.lake();
+        this.riverWarp = warp.river();
+    }
+    
+    public void apply(Cell cell, float x, float z) {
+        float rx = this.riverWarp.getX(x, z, 0);
+        float rz = this.riverWarp.getZ(x, z, 0);
+        float lx = this.lakeWarp.getOffsetX(rx, rz, 0);
+        float lz = this.lakeWarp.getOffsetZ(rx, rz, 0);
+        for (Network network : this.networks) {
+            if (network.contains(rx, rz)) {
+                network.carve(cell, rx, rz, lx, lz);
+                applySlope(cell, rx, rz);
+            }
+        }
+    }
+
+    private void applySlope(Cell cell, float x, float z) {
+      float riverMask = cel.lriverVal;
+      float depth = 1.2F - riverMask;
+      depth = (float) Math.pow(depth, 1.6F);
+      float hL = cell.heightmap.getHeight(x - 1, z);
+      float hR = cell.heightmap.getHeight(x + 1, z);
+      float hD = cell.heightmap.getHeight(x, z - 1);
+      float hU = cell.heightmap.getHeight(x, z + 1);
+
+      float gx = hR - hL;
+      float gz = hU -hD;
+      float slope = (float) Math.sqrt(gx * gx + gz * gz);
+
+      float slopeBonus = slope * 0.6F;
+      float totalDepth = depth * 18F + slopeBonus;
+      float newHeight = cell.height - totalDepth;
+
+      float blend = Math.min(1F, riverMask * 2F);
+      cell.height = lerp(newHeight, cell.height, blend);
+    }
+
+    private float lerp(float a, float b, float t) {
+      return a + (b - a) * t;
+    }
+    
+    @Override
+    public long getTimestamp() {
+        return this.timestamp;
+    }
+    
+    public int getX() {
+        return this.x;
+    }
+    
+    public int getZ() {
+        return this.z;
+    }
+    
+    public static Rivermap get(Cell cell, Rivermap instance, Heightmap heightmap) {
+        return get(cell.continentX, cell.continentZ, instance, heightmap);
+    }
+    
+    public static Rivermap get(int x, int z, Rivermap instance, Heightmap heightmap) {
+        if (instance != null && x == instance.getX() && z == instance.getZ()) {
+            return instance;
+        }
+        return heightmap.continent().getRivermap(x, z);
+    }
+}
+
+---
+
+package com.regenerationforrged.world.worldgen.cell.rivermap.river;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.Random;
+
+import com.regenerationforrged.world.worldgen.GeneratorContext;
+import com.regenerationforrged.world.worldgen.cell.continent.Continent;
+import com.regenerationforrged.world.worldgen.cell.heightmap.Levels;
+import com.regenerationforrged.world.worldgen.cell.rivermap.RiverGenerator;
+import com.regenerationforrged.world.worldgen.cell.rivermap.Rivermap;
+import com.regenerationforrged.world.worldgen.cell.rivermap.gen.GenWarp;
+import com.regenerationforrged.world.worldgen.cell.rivermap.lake.Lake;
+import com.regenerationforrged.world.worldgen.cell.rivermap.lake.LakeConfig;
+import com.regenerationforrged.world.worldgen.cell.rivermap.wetland.Wetland;
+import com.regenerationforrged.world.worldgen.cell.rivermap.wetland.WetlandConfig;
+import com.regenerationforrged.world.worldgen.noise.NoiseUtil;
+import com.regenerationforrged.world.worldgen.noise.NoiseUtil.Vec2f;
+import com.regenerationforrged.world.worldgen.util.PosUtil;
+import com.regenerationforrged.world.worldgen.util.Variance;
+
+public abstract class BaseRiverGenerator<T extends Continent> implements RiverGenerator {
+    protected int count;
+    protected int continentScale;
+    protected float minEdgeValue;
+    protected int seed;
+    protected LakeConfig lake;
+    protected RiverConfig main;
+    protected RiverConfig fork;
+    protected WetlandConfig wetland;
+    protected T continent;
+    protected Levels levels;
+    
+    public BaseRiverGenerator(T continent, GeneratorContext context) {
+        this.continent = continent;
+        this.levels = context.levels;
+        this.continentScale = context.preset.world().continent.continentScale;
+        this.minEdgeValue = context.preset.world().controlPoints.inland;
+        this.seed = context.seed.root() + context.preset.rivers().seedOffset;
+        this.count = context.preset.rivers().riverCount;
+        this.main = RiverConfig.builder(context.levels).bankHeight(context.preset.rivers().mainRivers.minBankHeight, context.preset.rivers().mainRivers.maxBankHeight).bankWidth(context.preset.rivers().mainRivers.bankWidth).bedWidth(context.preset.rivers().mainRivers.bedWidth).bedDepth(context.preset.rivers().mainRivers.bedDepth).fade(context.preset.rivers().mainRivers.fade).length(5000).main(true).order(0).build();
+        this.fork = RiverConfig.builder(context.levels).bankHeight(context.preset.rivers().branchRivers.minBankHeight, context.preset.rivers().branchRivers.maxBankHeight).bankWidth(context.preset.rivers().branchRivers.bankWidth).bedWidth(context.preset.rivers().branchRivers.bedWidth).bedDepth(context.preset.rivers().branchRivers.bedDepth).fade(context.preset.rivers().branchRivers.fade).length(4500).order(1).build();
+        this.wetland = new WetlandConfig(context.preset.rivers().wetlands);
+        this.lake = LakeConfig.of(context.preset.rivers().lakes, context.levels);
+    }
+    
+    @Override
+    public Rivermap generateRivers(int x, int z, long id) {
+        Random random = new Random(id + this.seed);
+        GenWarp warp = GenWarp.make((int) id, this.continentScale);
+        List<Network.Builder> rivers = this.generateRoots(x, z, random, warp);
+        Collections.shuffle(rivers, random);
+        for (Network.Builder root : rivers) {
+            this.generateForks(root, River.MAIN_SPACING, this.fork, random, warp, rivers, 0);
+        }
+        for (Network.Builder river : rivers) {
+            this.generateWetlands(river, random);
+        }
+        Network[] networks = rivers.stream().map(Network.Builder::build).toArray(Network[]::new);
+        return new Rivermap(x, z, networks, warp);
+    }
+    
+    public List<Network.Builder> generateRoots(int x, int z, Random random, GenWarp warp) {
+        return Collections.emptyList();
+    }
+    
+    public void generateForks(Network.Builder parent, Variance spacing, RiverConfig config, Random random, GenWarp warp, List<Network.Builder> rivers, int depth) {
+        if (depth > 2) {
+            return;
+        }
+        float length = 0.44F * parent.carver.river.length;
+        if (length < 300.0f) {
+            return;
+        }
+        int direction = random.nextBoolean() ? 1 : -1;
+        for (float offset = 0.25F; offset < 0.9f; offset += spacing.next(random)) {
+            for (boolean attempt = true; attempt; attempt = false) {
+                direction = -direction;
+                float parentAngle = parent.carver.river.getAngle();
+                float forkAngle = direction * 6.2831855F * River.FORK_ANGLE.next(random);
+                float angle = parentAngle + forkAngle;
+                float dx = NoiseUtil.sin(angle);
+                float dz = NoiseUtil.cos(angle);
+                long v1 = parent.carver.river.pos(offset);
+                float x1 = PosUtil.unpackLeftf(v1);
+                float z1 = PosUtil.unpackRightf(v1);
+                if (this.continent.getEdgeValue(x1, z1) >= this.minEdgeValue) {
+                    float x2 = x1 - dx * length;
+                    float z2 = z1 - dz * length;
+                    if (this.continent.getEdgeValue(x2, z2) >= this.minEdgeValue) {
+                        RiverConfig forkConfig = parent.carver.createForkConfig(offset, this.levels);
+                        River river = new River(x2, z2, x1, z1);
+                        if (!this.riverOverlaps(river, parent, rivers)) {
+                            float valleyWidth = 275.0f * River.FORK_VALLEY.next(random);
+                            RiverCarver.Settings settings = creatSettings(random);
+                            settings.connecting = true;
+                            settings.fadeIn = config.fade;
+                            settings.valleySize = valleyWidth;
+                            RiverWarp forkWarp = parent.carver.warp.createChild(0.15f, 0.75f, 0.65f, random);
+                            RiverCarver fork = new RiverCarver(river, forkWarp, forkConfig, settings, this.levels);
+                            Network.Builder builder = Network.builder(fork);
+                            parent.children.add(builder);
+                            this.generateForks(builder, River.FORK_SPACING, config, random, warp, rivers, depth + 1);
+                        }
+                    }
+                }
+            }
+        }
+        this.addLake(parent, random, warp);
+    }
+    
+    public void generateAdditionalLakes(int x, int z, Random random, List<Network.Builder> roots, List<RiverCarver> rivers, List<Lake> lakes) {
+        float size = 150.0f;
+        Variance sizeVariance = Variance.of(1.0F, 0.25F);
+        Variance distanceVariance = Variance.of(0.6000000238418579F, 0.30000001192092896F);
+        for (int i = 1; i < roots.size(); ++i) {
+            Network.Builder a = roots.get(i - 1);
+            float angle = 0.0F;
+            float dx = NoiseUtil.sin(angle);
+            float dz = NoiseUtil.cos(angle);
+            float distance = distanceVariance.next(random);
+            float lx = x + dx * a.carver.river.length * distance;
+            float lz = z + dz * a.carver.river.length * distance;
+            float variance = sizeVariance.next(random);
+            Vec2f center = new Vec2f(lx, lz);
+            if (!this.lakeOverlaps(center, size, rivers)) {
+                lakes.add(new Lake(center, size, variance, this.lake));
+            }
+        }
+    }
+    
+    public void generateWetlands(Network.Builder builder, Random random) {
+        int skip = random.nextInt(this.wetland.skipSize);
+        if (skip == 0) {
+            float width = this.wetland.width.next(random);
+            float length = this.wetland.length.next(random);
+            float riverLength = builder.carver.river.length();
+            float startPos = random.nextFloat() * 0.75f;
+            float endPos = startPos + random.nextFloat() * (length / riverLength);
+            long start = builder.carver.river.pos(startPos);
+            long end = builder.carver.river.pos(endPos);
+            float x1 = PosUtil.unpackLeftf(start);
+            float z1 = PosUtil.unpackRightf(start);
+            float x2 = PosUtil.unpackLeftf(end);
+            float z2 = PosUtil.unpackRightf(end);
+            builder.wetlands.add(new Wetland(random.nextInt(), new Vec2f(x1, z1), new Vec2f(x2, z2), width, this.levels));
+        }
+        for (Network.Builder child : builder.children) {
+            this.generateWetlands(child, random);
+        }
+    }
+    
+    public void addLake(Network.Builder branch, Random random, GenWarp warp) {
+        if (random.nextFloat() <= this.lake.chance) {
+            float lakeSize = this.lake.sizeMin + random.nextFloat() * this.lake.sizeRange;
+            float cx = branch.carver.river.x1;
+            float cz = branch.carver.river.z1;
+            if (this.lakeOverlapsOther(cx, cz, lakeSize, branch.lakes)) {
+                return;
+            }
+            branch.lakes.add(new Lake(new Vec2f(cx, cz), lakeSize, 1.0f, this.lake));
+        }
+    }
+    
+    public boolean riverOverlaps(River river, Network.Builder parent, List<Network.Builder> rivers) {
+        for (Network.Builder other : rivers) {
+            if (other.overlaps(river, parent, 250.0f)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    public boolean lakeOverlaps(Vec2f lake, float size, List<RiverCarver> rivers) {
+        for (RiverCarver other : rivers) {
+            if (!other.main && other.river.overlaps(lake, size)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    public boolean lakeOverlapsOther(float x, float z, float size, List<Lake> lakes) {
+        float dist2 = size * size;
+        for (Lake other : lakes) {
+            if (other.overlaps(x, z, dist2)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    public static RiverCarver create(float x1, float z1, float x2, float z2, RiverConfig config, Levels levels, Random random) {
+        River river = new River(x1, z1, x2, z2);
+        RiverWarp warp = RiverWarp.create(0.35f, random);
+        float valleyWidth = 275.0f * River.MAIN_VALLEY.next(random);
+        RiverCarver.Settings settings = creatSettings(random);
+        settings.connecting = false;
+        settings.fadeIn = config.fade;
+        settings.valleySize = valleyWidth;
+        return new RiverCarver(river, warp, config, settings, levels);
+    }
+    
+    public static RiverCarver createFork(float x1, float z1, float x2, float z2, float valleyWidth, RiverConfig config, Levels levels, Random random) {
+        River river = new River(x1, z1, x2, z2);
+        RiverWarp warp = RiverWarp.create(0.4f, random);
+        RiverCarver.Settings settings = creatSettings(random);
+        settings.connecting = true;
+        settings.fadeIn = config.fade;
+        settings.valleySize = valleyWidth;
+        return new RiverCarver(river, warp, config, settings, levels);
+    }
+    
+    public static RiverCarver.Settings creatSettings(Random random) {
+        RiverCarver.Settings settings = new RiverCarver.Settings();
+        settings.valleyCurve = RiverCarver.getValleyType(random);
+        return settings;
+    }
+}
+
+---
+
+package com.regenerationforrged.world.worldgen.cell.rivermap.river;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import com.regenerationforrged.world.worldgen.cell.Cell;
+import com.regenerationforrged.world.worldgen.cell.rivermap.lake.Lake;
+import com.regenerationforrged.world.worldgen.cell.rivermap.wetland.Wetland;
+import com.regenerationforrged.world.worldgen.noise.module.Line;
+import com.regenerationforrged.world.worldgen.util.Boundsf;
+import com.regenerationforrged.world.worldgen.util.PosUtil;
+
+public record Network(RiverCarver riverCarver, Lake[] lakes, Wetland[] wetlands, Network[] children, Boundsf bounds) {
+    
+    public boolean contains(float x, float z) {
+        return this.bounds.contains(x, z);
+    }
+    
+    public void carve(Cell cell, float x, float z, float nx, float nz) {
+        River river = this.riverCarver.river;
+        RiverWarp warp = this.riverCarver.warp;
+        float t = Line.distanceOnLine(x, z, river.x1, river.z1, river.x2, river.z2);
+        float px = x;
+        float pz = z;
+        float pt = t;
+        if (warp.test(t)) {
+            long offset = warp.getOffset(x, z, pt, river);
+            x += PosUtil.unpackLeftf(offset);
+            z += PosUtil.unpackRightf(offset);
+            t = Line.distanceOnLine(x, z, river.x1, river.z1, river.x2, river.z2);
+        }
+        this.carveRiver(cell, px, pz, pt, x, z, t);
+        this.carveWetlands(cell, x, z, nx, nz);
+        this.carveLakes(cell, x, z, nx, nz);
+        for (Network network : this.children) {
+            network.carve(cell, x, z, nx, nz);
+        }
+    }
+    
+    public boolean overlaps(River river, float extend) {
+        return overlaps(river, this.riverCarver, extend) || overlaps(river, this.children, extend);
+    }
+    
+    private void carveRiver(Cell cell, float px, float pz, float pt, float x, float z, float t) {
+        this.riverCarver.carve(cell, px, pz, pt, x, z, t);
+    }
+    
+    private void carveWetlands(Cell cell, float x, float z, float nx, float nz) {
+        for (Wetland wetland : this.wetlands) {
+            wetland.apply(cell, x + nx, z + nz, x, z);
+        }
+    }
+    
+    private void carveLakes(Cell cell, float x, float z, float nx, float nz) {
+        float lx = x + nx;
+        float lz = z + nz;
+        for (Lake lake : this.lakes) {
+            lake.apply(cell, lx, lz);
+        }
+    }
+    
+    private static boolean overlaps(River river, RiverCarver riverCarver, float extend) {
+        return riverCarver.river.intersects(river, extend);
+    }
+    
+    private static boolean overlaps(River river, Network[] networks, float extend) {
+        for (Network network : networks) {
+            if (network.overlaps(river, extend)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    public static Builder builder(RiverCarver carver) {
+        return new Builder(carver);
+    }
+    
+    public static class Builder {
+        public RiverCarver carver;
+        public List<Lake> lakes;
+        public List<Wetland> wetlands;
+        public List<Builder> children;
+        private float minX;
+        private float minZ;
+        private float maxX;
+        private float maxZ;
+        
+        private Builder(RiverCarver carver) {
+            this.lakes = new ArrayList<>();
+            this.wetlands = new ArrayList<>();
+            this.children = new ArrayList<>();
+            this.carver = carver;
+            this.addBounds(carver.river);
+        }
+        
+        public void addBounds(River river) {
+            this.minX = min(this.minX, river.x1, river.x2);
+            this.minZ = min(this.minZ, river.z1, river.z2);
+            this.maxX = max(this.maxX, river.x1, river.x2);
+            this.maxZ = max(this.maxZ, river.z1, river.z2);
+        }
+        
+        public boolean overlaps(River river, Builder parent, float extend) {
+            if (parent == this) {
+                float x1 = river.x1 - river.ndx * extend;
+                float z1 = river.z1 - river.ndz * extend;
+                float x2 = river.x1 + river.dx * 0.5F;
+                float z2 = river.z1 + river.dz * 0.5F;
+                River other = this.carver.river;
+                if (Line.intersect(x1, z1, x2, z2, other.x1, other.z1, other.x2, other.z2)) {
+                    return true;
+                }
+            } else if (Network.overlaps(river, this.carver, extend)) {
+                return true;
+            }
+            if (parent != null && parent != this && Network.overlaps(river, this.carver, extend)) {
+                return true;
+            }
+            for (Builder branch : this.children) {
+                if (branch.overlaps(river, parent, extend)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        public Network build() {
+            return this.build(this.recordBounds(Boundsf.builder()).build());
+        }
+        
+        private Network build(Boundsf bounds) {
+            return new Network(this.carver, this.lakes.toArray(Lake[]::new), this.wetlands.toArray(Wetland[]::new), this.children.stream().map(child -> child.build(Boundsf.NONE)).toArray(Network[]::new), bounds);
+        }
+        
+        private Boundsf.Builder recordBounds(Boundsf.Builder builder) {
+            builder.record(this.carver.river.minX, this.carver.river.minZ);
+            builder.record(this.carver.river.maxX, this.carver.river.maxZ);
+            for (Builder child : this.children) {
+                child.recordBounds(builder);
+            }
+            for (Lake lake : this.lakes) {
+                lake.recordBounds(builder);
+            }
+            for (Wetland wetland : this.wetlands) {
+                wetland.recordBounds(builder);
+            }
+            return builder;
+        }
+        
+        private static float min(float min, float... values) {
+            for (float v : values) {
+                min = Math.min(min, v);
+            }
+            return min;
+        }
+        
+        private static float max(float max, float... values) {
+            for (float v : values) {
+                max = Math.max(max, v);
+            }
+            return max;
+        }
+    }
+}
+
+
+---
+
+package com.regenerationforrged.world.worldgen.cell.rivermap.river;
+
+public record Range(float min, float max) {}
+
+---
+
+package com.regenerationforrged.world.worldgen.cell.rivermap.river;
+
+import com.regenerationforrged.world.worldgen.noise.NoiseUtil;
+import com.regenerationforrged.world.worldgen.noise.NoiseUtil.Vec2f;
+import com.regenerationforrged.world.worldgen.noise.NoiseUtil.Vec2i;
+import com.regenerationforrged.world.worldgen.noise.module.Line;
+import com.regenerationforrged.world.worldgen.util.PosUtil;
+import com.regenerationforrged.world.worldgen.util.Variance;
+
+public class River {
+    public static final int VALLEY_WIDTH = 275;
+    public static final Variance MAIN_VALLEY = Variance.of(0.8F, 0.7F);
+    public static final Variance FORK_VALLEY = Variance.of(0.4F, 0.75F);
+    public static final Variance FORK_ANGLE = Variance.of(0.075F, 0.115F);
+    public static final Variance MAIN_SPACING = Variance.of(0.1F, 0.25F);
+    public static final Variance FORK_SPACING = Variance.of(0.25F, 0.25F);
+
+    public float x1;
+    public float z1;
+    public float x2;
+    public float z2;
+    public float dx;
+    public float dz;
+    public float ndx;
+    public float ndz;
+    public float normX;
+    public float normZ;
+    public float length;
+    public float length2;
+    public float minX;
+    public float minZ;
+    public float maxX;
+    public float maxZ;
+    
+    public River(float x1, float z1, float x2, float z2) {
+        this(x1, z1, x2, z2, 275.0F);
+    }
+    
+    public River(float x1, float z1, float x2, float z2, float radius) {
+        radius *= 2.0F;
+        this.x1 = x1;
+        this.z1 = z1;
+        this.x2 = x2;
+        this.z2 = z2;
+        this.dx = x2 - x1;
+        this.dz = z2 - z1;
+        this.length = (float) Math.sqrt(this.dx * this.dx + this.dz * this.dz);
+        this.length2 = this.length * this.length;
+        this.ndx = this.dx / this.length;
+        this.ndz = this.dz / this.length;
+        this.normX = this.ndz;
+        this.normZ = -this.ndx;
+        this.minX = Math.min(x1, x2) - radius;
+        this.minZ = Math.min(z1, z2) - radius;
+        this.maxX = Math.max(x1, x2) + radius;
+        this.maxZ = Math.max(z1, z2) + radius;
+    }
+    
+    public float length() {
+        return this.length;
+    }
+    
+    public float getAngle() {
+        return (float) Math.atan2(this.dx, this.dz);
+    }
+    
+    public long pos(float distance) {
+        return PosUtil.packf(this.x1 + this.dx * distance, this.z1 + this.dz * distance);
+    }
+    
+    public long pos(float distance, RiverWarp warp) {
+        float x = this.x1 + this.dx * distance;
+        float z = this.z1 + this.dz * distance;
+        if (warp.test(distance)) {
+            long offset = warp.getOffset(x, z, distance, this);
+            x -= PosUtil.unpackLeftf(offset);
+            z -= PosUtil.unpackRightf(offset);
+        }
+        return PosUtil.packf(x, z);
+    }
+    
+    public boolean intersects(River other) {
+        return Line.intersect(other.x1, other.z1, other.x2, other.z2, this.x1, this.z1, this.x2, this.z2);
+    }
+    
+    public boolean intersects(River other, float extend) {
+        float extendA = NoiseUtil.clamp(extend / this.length, 0.0F, 1.0F);
+        float extendB = NoiseUtil.clamp(extend / other.length, 0.0F, 1.0F);
+        float deltaAX = this.x2 - this.x1;
+        float deltaAY = this.z2 - this.z1;
+        float deltaBX = other.x2 - other.x1;
+        float deltaBY = other.z2 - other.z1;
+        float ax1 = this.x1 - deltaAX * extendA;
+        float ax2 = this.x2 + deltaAX * extendA;
+        float ay1 = this.z1 - deltaAY * extendA;
+        float ay2 = this.z2 + deltaAY * extendA;
+        float bx1 = other.x1 - deltaBX * extendB;
+        float bx2 = other.x2 + deltaBX * extendB;
+        float by1 = other.z1 - deltaBY * extendB;
+        float by2 = other.z2 + deltaBY * extendB;
+        return Line.intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2);
+    }
+    
+    public boolean contains(float x, float z) {
+        return x >= this.minX && x <= this.maxX && z >= this.minZ && z <= this.maxZ;
+    }
+    
+    public boolean overlaps(River other) {
+        return this.overlaps(other.minX, other.minZ, other.maxX, other.maxZ);
+    }
+    
+    public boolean overlaps(float minX, float minY, float maxX, float maxY) {
+        return this.minX < maxX && this.maxX > minX && this.minZ < maxY && this.maxZ > minY;
+    }
+    
+    public boolean overlaps(Vec2f center, float radius) {
+        float minX = center.x() - radius;
+        float maxX = center.x() + radius;
+        float minY = center.y() - radius;
+        float maxY = center.y() + radius;
+        return this.overlaps(minX, minY, maxX, maxY);
+    }
+    
+    public River shorten(int distance) {
+        float factor = distance / this.length();
+        float dx = this.x2 - this.x1;
+        float dy = this.z2 - this.z1;
+        float x = NoiseUtil.round(this.x1 + dx * factor);
+        float y = NoiseUtil.round(this.z1 + dy * factor);
+        return new River(x, y, this.x2, this.z2);
+    }
+    
+    @Override
+    public String toString() {
+        return "RiverBounds{x1=" + this.x1 + ", y1=" + this.z1 + ", x2=" + this.x2 + ", y2=" + this.z2 + ", length=" + this.length + ", length2=" + this.length2 + '}';
+    }
+    
+    public static River fromNodes(Vec2i p1, Vec2i p2) {
+        return new River(p1.x(), p1.y(), p2.x(), p2.y(), 300.0F);
+    }
+}
+
+---
+
+
+package com.regenerationforrged.world.worldgen.cell.rivermap.river;
+
+import java.util.Random;
+
+import com.regenerationforrged.world.worldgen.cell.Cell;
+import com.regenerationforrged.world.worldgen.cell.heightmap.Levels;
+import com.regenerationforrged.world.worldgen.cell.terrain.TerrainType;
+import com.regenerationforrged.world.worldgen.noise.NoiseUtil;
+import com.regenerationforrged.world.worldgen.noise.function.CurveFunction;
+import com.regenerationforrged.world.worldgen.noise.function.CurveFunctions;
+import com.regenerationforrged.world.worldgen.noise.module.Line;
+
+public class RiverCarver implements Comparable<RiverCarver> {
+    public boolean main;
+    private boolean connecting;
+    private float fade;
+    private float fadeInv;
+    private Range bedWidth;
+    private Range banksWidth;
+    private Range valleyWidth;
+    private Range bedDepth;
+    private Range banksDepth;
+    private float waterLine;
+    public River river;
+    public RiverWarp warp;
+    public RiverConfig config;
+    public CurveFunction valleyCurve;
+    
+    public RiverCarver(River river, RiverWarp warp, RiverConfig config, Settings settings, Levels levels) {
+        this.fade = settings.fadeIn;
+        this.fadeInv = 1.0F / settings.fadeIn;
+        this.bedWidth = new Range(0.25F, (float)(config.bedWidth * config.bedWidth));
+        this.banksWidth = new Range(1.5625F, (float)(config.bankWidth * config.bankWidth));
+        this.valleyWidth = new Range(settings.valleySize * settings.valleySize, settings.valleySize * settings.valleySize);
+        this.river = river;
+        this.warp = warp;
+        this.config = config;
+        this.main = config.main;
+        this.connecting = settings.connecting;
+        this.waterLine = levels.water;
+        this.bedDepth = new Range(levels.water, config.bedHeight);
+        this.banksDepth = new Range(config.minBankHeight, config.maxBankHeight);
+        this.valleyCurve = settings.valleyCurve;
+    }
+
+    @Override
+    public int compareTo(RiverCarver o) {
+        return Integer.compare(this.config.order, o.config.order);
+    }
+    
+    public void carve(Cell cell, float px, float pz, float pt, float x, float z, float t) {
+        float d2 = this.getDistance2(x, z, t);
+        float pd2 = this.getDistance2(px, pz, pt);
+        float valleyAlpha = this.getDistanceAlpha(pt, Math.min(d2, pd2), this.valleyWidth);
+        if (valleyAlpha == 0.0F) {
+            return;
+        }
+        float bankHeight = this.getScaledSize(t, this.banksDepth);
+        valleyAlpha = this.valleyCurve.apply(valleyAlpha);
+        cell.riverMask = Math.min(cell.riverMask, 1.0F - valleyAlpha);
+        cell.height = Math.min(NoiseUtil.lerp(cell.height, bankHeight, valleyAlpha), cell.height);
+        if (!this.connecting || t > 1.0F) {
+        	
+        }
+        float mouthModifier = getMouthModifier(cell);
+        float bedHeight = this.getScaledSize(t, this.bedDepth);
+        float banksAlpha = this.getDistanceAlpha(t, d2 * mouthModifier, this.banksWidth);
+        if (banksAlpha == 0.0F) {
+            return;
+        }
+        if (cell.height > bedHeight) {
+            cell.height = Math.min(NoiseUtil.lerp(cell.height, bedHeight, banksAlpha), cell.height);
+            this.tag(cell, bedHeight);
+        }
+        float bedAlpha = this.getDistanceAlpha(t, d2, this.bedWidth);
+        if (bedAlpha != 0.0F && cell.height > bedHeight) {
+            cell.height = NoiseUtil.lerp(cell.height, bedHeight, bedAlpha);
+            this.tag(cell, bedHeight);
+        }
+    }
+    
+    public RiverConfig createForkConfig(float t, Levels levels) {
+        int bedHeight = levels.scale(this.getScaledSize(t, this.bedDepth));
+        int bedWidth = (int)Math.round(Math.sqrt(this.getScaledSize(t, this.bedWidth)) * 0.75);
+        int bankWidth = (int)Math.round(Math.sqrt(this.getScaledSize(t, this.banksWidth)) * 0.75);
+        bedWidth = Math.max(1, bedWidth);
+        bankWidth = Math.max(bedWidth + 1, bankWidth);
+        return this.config.createFork(bedHeight, bedWidth, bankWidth, levels);
+    }
+    
+    private float getDistance2(float x, float y, float t) {
+        if (t <= 0.0F) {
+            return Line.distSq(x, y, this.river.x1, this.river.z1);
+        }
+        if (t >= 1.0F) {
+            return Line.distSq(x, y, this.river.x2, this.river.z2);
+        }
+        float px = this.river.x1 + t * this.river.dx;
+        float py = this.river.z1 + t * this.river.dz;
+        return Line.distSq(x, y, px, py);
+    }
+    
+    private float getDistanceAlpha(float t, float dist2, Range range) {
+        float size2 = this.getScaledSize(t, range);
+        if (dist2 >= size2) {
+            return 0.0F;
+        }
+        return 1.0F - dist2 / size2;
+    }
+    
+    private float getScaledSize(float t, Range range) {
+        if (t < 0.0F) {
+            return range.min();
+        }
+        if (t > 1.0F) {
+            return range.max();
+        }
+        if (range.min() == range.max()) {
+            return range.min();
+        }
+        if (t >= this.fade) {
+            return range.max();
+        }
+        return NoiseUtil.lerp(range.min(), range.max(), t * this.fadeInv);
+    }
+    
+    private void tag(Cell cell, float bedHeight) {
+        if (cell.terrain.overridesRiver() && (cell.height < bedHeight || cell.height > this.waterLine)) {
+            return;
+        }
+        cell.erosionMask = true;
+        if (cell.height <= this.waterLine) {
+            cell.terrain = TerrainType.RIVER;
+        }
+    }
+    
+    private static float getMouthModifier(Cell cell) {
+        float modifier = NoiseUtil.map(cell.continentEdge, 0.0F, 0.5F, 0.5F);
+        modifier *= modifier;
+        return modifier;
+    }
+    
+    public static CurveFunction getValleyType(Random random) {
+        int value = random.nextInt(100);
+        if (value < 5) {
+            return CurveFunctions.scurve(0.4F, 1.0F);
+        }
+        if (value < 30) {
+            return CurveFunctions.scurve(4.0F, 5.0F);
+        }
+        if (value < 50) {
+            return CurveFunctions.scurve(3.0F, 0.25F);
+        }
+        return CurveFunctions.scurve(2.0F, -0.5F);
+    }
+    
+    public static RiverCarver create(float x1, float z1, float x2, float z2, RiverConfig config, Levels levels, Random random) {
+        River river = new River(x1, z1, x2, z2);
+        RiverWarp warp = RiverWarp.create(0.35F, random);
+        float valleyWidth = 275.0F * River.MAIN_VALLEY.next(random);
+        Settings settings = creatSettings(random);
+        settings.connecting = false;
+        settings.fadeIn = config.fade;
+        settings.valleySize = valleyWidth;
+        return new RiverCarver(river, warp, config, settings, levels);
+    }
+    
+    private static Settings creatSettings(Random random) {
+        Settings settings = new Settings();
+        settings.valleyCurve = getValleyType(random);
+        return settings;
+    }
+    
+    public static class Settings {
+        public float valleySize;
+        public float fadeIn;
+        public boolean connecting;
+        public CurveFunction valleyCurve;
+        
+        public Settings() {
+            this.valleySize = 275.0F;
+            this.fadeIn = 0.7F;
+            this.connecting = false;
+            this.valleyCurve = CurveFunctions.scurve(2.0F, -0.5F);
+        }
+    }
+}
+
+---
+
+
+package com.regenerationforrged.world.worldgen.cell.rivermap.river;
+
+import com.regenerationforrged.world.worldgen.cell.heightmap.Levels;
+import com.regenerationforrged.world.worldgen.noise.NoiseUtil;
+
+public class RiverConfig {
+    public int order;
+    public boolean main;
+    public int bedWidth;
+    public int bankWidth;
+    public float bedHeight;
+    public float minBankHeight;
+    public float maxBankHeight;
+    public int length;
+    public int length2;
+    public float fade;
+    
+    private RiverConfig(Builder builder) {
+        this.main = builder.main;
+        this.order = builder.order;
+        this.bedWidth = builder.bedWidth;
+        this.bankWidth = builder.bankWidth;
+        this.bedHeight = builder.levels.water(-builder.bedDepth);
+        this.minBankHeight = builder.levels.water(builder.minBankHeight);
+        this.maxBankHeight = builder.levels.water(builder.maxBankHeight);
+        this.length = builder.length;
+        this.length2 = builder.length * builder.length;
+        this.fade = builder.fade;
+    }
+    
+    public RiverConfig(boolean main, int order, int bedWidth, int bankWidth, float bedHeight, float minBankHeight, float maxBankHeight, int length, int length2, float fade) {
+        this.main = main;
+        this.order = order;
+        this.bedWidth = bedWidth;
+        this.bankWidth = bankWidth;
+        this.bedHeight = bedHeight;
+        this.minBankHeight = minBankHeight;
+        this.maxBankHeight = maxBankHeight;
+        this.length = length;
+        this.length2 = length2;
+        this.fade = fade;
+    }
+    
+    public RiverConfig createFork(float connectWidth, Levels levels) {
+        if (this.bankWidth < connectWidth) {
+            return this;
+        }
+        float scale = this.bankWidth / connectWidth;
+        return this.createFork(levels.scale(this.bedHeight), NoiseUtil.round(this.bedWidth / scale), NoiseUtil.round(this.bankWidth / scale), levels);
+    }
+    
+    public RiverConfig createFork(int bedHeight, int bedWidth, int bankWidth, Levels levels) {
+        int minBankHeight = Math.max(levels.groundLevel, levels.scale(this.minBankHeight) - 1);
+        int maxBankHeight = Math.max(minBankHeight, levels.scale(this.maxBankHeight) - 1);
+        return new RiverConfig(false, this.order + 1, bedWidth, bankWidth, levels.scale(bedHeight), levels.scale(minBankHeight), levels.scale(maxBankHeight), this.length, this.length2, this.fade);
+    }
+    
+    public static Builder builder(Levels levels) {
+        return new Builder(levels);
+    }
+    
+    public static class Builder {
+        private boolean main;
+        private int order;
+        private int bedWidth;
+        private int bankWidth;
+        private int bedDepth;
+        private int maxBankHeight;
+        private int minBankHeight;
+        private int length;
+        private float fade;
+        private Levels levels;
+        
+        private Builder(Levels levels) {
+            this.main = false;
+            this.order = 0;
+            this.bedWidth = 4;
+            this.bankWidth = 15;
+            this.bedDepth = 5;
+            this.maxBankHeight = 1;
+            this.minBankHeight = 1;
+            this.length = 1000;
+            this.fade = 0.2F;
+            this.levels = levels;
+        }
+        
+        public Builder order(int order) {
+            this.order = order;
+            return this;
+        }
+        
+        public Builder main(boolean value) {
+            this.main = value;
+            return this;
+        }
+        
+        public Builder bedWidth(int value) {
+            this.bedWidth = value;
+            return this;
+        }
+        
+        public Builder bankWidth(int value) {
+            this.bankWidth = value;
+            return this;
+        }
+        
+        public Builder bedDepth(int depth) {
+            this.bedDepth = depth;
+            return this;
+        }
+        
+        public Builder bankHeight(int min, int max) {
+            this.minBankHeight = Math.min(min, max);
+            this.maxBankHeight = Math.max(min, max);
+            return this;
+        }
+        
+        public Builder length(int value) {
+            this.length = value;
+            return this;
+        }
+        
+        public Builder fade(float value) {
+            this.fade = value;
+            return this;
+        }
+        
+        public RiverConfig build() {
+            return new RiverConfig(this);
+        }
+    }
+}
+
+---
+
+
+package com.regenerationforrged.world.worldgen.cell.rivermap.river;
+
+import java.util.Random;
+
+import com.regenerationforrged.world.worldgen.noise.NoiseUtil;
+import com.regenerationforrged.world.worldgen.noise.module.Simplex2;
+import com.regenerationforrged.world.worldgen.util.PosUtil;
+
+public class RiverWarp {
+    public static final RiverWarp NONE = new RiverWarp(0, 0.0F, 0.0F, 0.0F, 0.0F);
+    private int seed;
+    private float lower;
+    private float upper;
+    private float lowerRange;
+    private float upperRange;
+    private float frequency;
+    private float scale;
+    
+    public RiverWarp(int seed, float lower, float upper, float frequency, float scale) {
+        this.seed = seed;
+        this.frequency = frequency;
+        this.scale = scale;
+        this.lower = lower;
+        this.upper = upper;
+        this.lowerRange = 1.0F / lower;
+        this.upperRange = 1.0F / (1.0F - upper);
+    }
+    
+    public RiverWarp createChild(float lower, float upper, float factor, Random random) {
+        return new RiverWarp(random.nextInt(), lower, upper, this.frequency * factor, this.scale * factor);
+    }
+    
+    public boolean test(float t) {
+        return this != RiverWarp.NONE && t >= 0.0F && t <= 1.0F;
+    }
+    
+    public long getOffset(float x, float z, float t, River river) {
+        float alpha1 = this.getWarpAlpha(t);
+        float px = x * this.frequency;
+        float pz = z * this.frequency;
+        float distance = alpha1 * this.scale;
+        float noise = Simplex2.sample(px, pz, this.seed);
+        float dx = river.normX * noise * distance;
+        float dz = river.normZ * noise * distance;
+        float alpha2 = this.getWiggleAlpha(t);
+        float factor = river.length * 4.0E-4F;
+        float wiggleFreq = 8.0f * factor;
+        float wiggleDist = NoiseUtil.clamp(alpha2 * 25.0F * factor, 2.0F, 45.0F);
+        float rads = noise + t * 6.2831855F * wiggleFreq;
+        dx += NoiseUtil.cos(rads) * river.normX * wiggleDist;
+        dz += NoiseUtil.sin(rads) * river.normZ * wiggleDist;
+        return PosUtil.packf(dx, dz);
+    }
+    
+    private float getWarpAlpha(float t) {
+        if (t < 0.0F || t > 1.0F) {
+            return 0.0F;
+        }
+        if (t < this.lower) {
+            return t * this.lowerRange;
+        }
+        if (t > this.upper) {
+            return (1.0F - t) * this.upperRange;
+        }
+        return 1.0F;
+    }
+    
+    private float getWiggleAlpha(float t) {
+        return NoiseUtil.map(t, 0.0F, 0.075F, 0.075F);
+    }
+    
+    public static RiverWarp create(float fade, Random random) {
+        return create(fade, 1.0F - fade, random);
+    }
+    
+    public static RiverWarp create(float lower, float upper, Random random) {
+        float scale = 125.0F + random.nextInt(50);
+        float frequency = 5.0E-4F + random.nextFloat() * 5.0E-4F;
+        return new RiverWarp(random.nextInt(), lower, upper, frequency, scale);
+    }
+}
+
+
