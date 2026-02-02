@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authentication - Portal</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="theme-toggle">
+        <button type="button" class="theme-btn" id="themeToggleBtn" onclick="toggleTheme()">
+            <i class="fas fa-moon"></i>
+        </button>
+    </div>L
+
+    <div class="main-wrapper" id="mainContainer">
+        <div class="animated-circle"></div>
+        
+        <div class="content-wrapper">
+            <div class="forms-section">
+                <form class="auth-form login-form" id="loginForm">
+                    <h2 class="form-heading">Sign In</h2>
+                    
+                    <div class="field-container">
+                        <i class="fas fa-user"></i>
+                        <input type="text" placeholder="Username" autocomplete="username">
+                        <span></span>
+                    </div>
+
+                    <div class="field-container">
+                        <i class="fas fa-lock"></i>
+                        <input type="password" id="loginPass" placeholder="Password" autocomplete="current-password">
+                        <i class="far fa-eye eye-icon" onclick="togglePasswordVisibility('loginPass', this)"></i>
+                    </div>
+
+                    <a href="#" class="text-link">Forgot your password?</a>
+
+                    <button type="submit" class="action-button">Login</button>
+
+                    <p class="social-heading">Or sign in with:</p>
+                    
+                    <div class="social-icons">
+                        <a href="#" class="social-link"><i class="fab fa-google"></i></a>
+                        <a href="#" class="social-link"><i class="fab fa-discord"></i></a>
+                        <a href="#" class="social-link"><i class="fab fa-twitter"></i></a>
+                        <a href="#" class="social-link"><i class="fab fa-facebook-f"></i></a>
+                    </div>
+                </form>
+
+                <form class="auth-form signup-form" id="signupForm">
+                    <h2 class="form-heading">Create Account</h2>
+                    
+                    <div class="field-container">
+                        <i class="fas fa-user"></i>
+                        <input type="text" placeholder="Username" autocomplete="username">
+                        <span></span>
+                    </div>
+
+                    <div class="field-container">
+                        <i class="fas fa-envelope"></i>
+                        <input type="email" placeholder="Email" autocomplete="email">
+                        <span></span>
+                    </div>
+
+                    <div class="field-container">
+                        <i class="fas fa-lock"></i>
+                        <input type="password" id="signupPass" placeholder="Password" autocomplete="new-password">
+                        <i class="far fa-eye eye-icon" onclick="togglePasswordVisibility('signupPass', this)"></i>
+                    </div>
+
+                    <div class="terms-check">
+                        <input type="checkbox" id="acceptTerms">
+                        <label for="acceptTerms">I accept the <a href="#">terms and conditions</a></label>
+                    </div>
+
+                    <button type="submit" class="action-button">Sign Up</button>
+
+                    <p class="social-heading">Or sign up with:</p>
+                    
+                    <div class="social-icons">
+                        <a href="#" class="social-link"><i class="fab fa-google"></i></a>
+                        <a href="#" class="social-link"><i class="fab fa-discord"></i></a>
+                        <a href="#" class="social-link"><i class="fab fa-twitter"></i></a>
+                        <a href="#" class="social-link"><i class="fab fa-facebook-f"></i></a>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="side-panels">
+            <div class="info-panel left-info">
+                <div class="panel-content">
+                    <h3>Don't have an account?</h3>
+                    <p>Create your account now to follow people and like publications</p>
+                    <button class="transparent-btn" onclick="switchToRegister()">Sign Up</button>
+                </div>
+                
+            </div>
+
+            <div class="info-panel right-info">
+                <div class="panel-content">
+                    <h3>Already have an account?</h3>
+                    <p>Sign in to see your notifications and post your favorite photos</p>
+                    <button class="transparent-btn" onclick="switchToLogin()">Sign In</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
